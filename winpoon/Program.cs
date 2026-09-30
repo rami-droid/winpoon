@@ -309,49 +309,52 @@ internal static class Program
 
         if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN)
         {
-            if (kbData.vkCode == VK_TAB && IsAltDown())
-            {
-                var reverse = IsShiftDown();
-                Log($"Shortcut {(reverse ? "Alt+Shift+Tab" : "Alt+Tab")} pressed.");
-                CycleWindow(reverse);
-
-                if (_suppressAltTab)
-                {
-                    return (IntPtr)1;
-                }
-            }
-
-            if ((kbData.vkCode == VK_Q) && IsAltDown() && IsCtrlDown())
-            {
-                Log("Shortcut Ctrl+Alt+Q pressed; exiting.");
-                PostQuitMessage(0);
-                return (IntPtr)1;
-            }
-
-            if (kbData.vkCode == VK_H && IsAltDown() && IsCtrlDown())
-            {
-                Log($"Shortcut Ctrl+Alt+H pressed; pin {(AddForegroundWindow() ? "succeeded" : "failed") }.");
-                return (IntPtr)1;
-            }
-
-            if (kbData.vkCode == VK_BACK && IsAltDown() && IsCtrlDown())
-            {
-                Log($"Shortcut Ctrl+Alt+Backspace pressed; unpin {(RemoveForegroundWindow() ? "succeeded" : "failed") }.");
-                return (IntPtr)1;
-            }
-
-            if (kbData.vkCode >= VK_NUMPAD1 && kbData.vkCode <= VK_NUMPAD9 &&
-                IsAltDown() && IsCtrlDown())
-            {
-                ActivateHarpoonWindow((int)kbData.vkCode - VK_NUMPAD1);
-                return (IntPtr)1;
-            }
-
             var numpadSlot = GetNumpadSlot(kbData);
-            if (numpadSlot >= 0 && IsAltDown() && IsCtrlDown())
+            if (kbData.vkCode >= VK_NUMPAD1 && kbData.vkCode <= VK_NUMPAD9)
             {
-                Log($"Shortcut Ctrl+Alt+Numpad {numpadSlot + 1} pressed.");
-                ActivateHarpoonWindow(numpadSlot);
+                numpadSlot = (int)kbData.vkCode - VK_NUMPAD1;
+            }
+
+            var modifiers = ShortcutModifiers.None;
+            if (IsAltDown()) modifiers |= ShortcutModifiers.Alt;
+            if (IsCtrlDown()) modifiers |= ShortcutModifiers.Control;
+            if (IsShiftDown()) modifiers |= ShortcutModifiers.Shift;
+
+            var action = KeybindManager.Resolve((int)kbData.vkCode, numpadSlot >= 0 ? numpadSlot : null, modifiers);
+            if (action is not null)
+            {
+                switch (action.Value)
+                {
+                    case KeybindAction.NextWindow:
+                        Log($"Shortcut {KeybindManager.Get(action.Value)} pressed.");
+                        CycleWindow(false);
+                        break;
+                    case KeybindAction.PreviousWindow:
+                        Log($"Shortcut {KeybindManager.Get(action.Value)} pressed.");
+                        CycleWindow(true);
+                        break;
+                    case KeybindAction.PinWindow:
+                        Log($"Shortcut {KeybindManager.Get(action.Value)} pressed; pin {(AddForegroundWindow() ? "succeeded" : "failed") }.");
+                        break;
+                    case KeybindAction.UnpinWindow:
+                        Log($"Shortcut {KeybindManager.Get(action.Value)} pressed; unpin {(RemoveForegroundWindow() ? "succeeded" : "failed") }.");
+                        break;
+                    case KeybindAction.Exit:
+                        Log($"Shortcut {KeybindManager.Get(action.Value)} pressed; exiting.");
+                        PostQuitMessage(0);
+                        break;
+                    default:
+                        var slot = (int)action.Value - (int)KeybindAction.Slot1;
+                        Log($"Shortcut {KeybindManager.Get(action.Value)} pressed.");
+                        ActivateHarpoonWindow(slot);
+                        break;
+                }
+
+                if ((action == KeybindAction.NextWindow || action == KeybindAction.PreviousWindow) && !_suppressAltTab)
+                {
+                    return CallNextHookEx(_hookId, nCode, wParam, lParam);
+                }
+
                 return (IntPtr)1;
             }
         }
@@ -396,6 +399,7 @@ internal static class Program
 
             var target = SwitchableWindows[_currentIndex];
             SetForegroundWindow(target);
+            CenterMouseOnWindow(target);
             Log($"Switched to bookmarked window: {GetWindowTitle(target)}.");
         }
     }
@@ -415,7 +419,18 @@ internal static class Program
             SwitchableWindows.Clear();
             _currentIndex = -1;
             SetForegroundWindow(HarpoonWindows[index]);
+            CenterMouseOnWindow(HarpoonWindows[index]);
             Log($"Activated bookmarked slot {index + 1}: {GetWindowTitle(HarpoonWindows[index])}.");
+        }
+    }
+
+    private static void CenterMouseOnWindow(IntPtr hWnd)
+    {
+        if (GetWindowRect(hWnd, out var rect))
+        {
+            var centerX = rect.Left + ((rect.Right - rect.Left) / 2);
+            var centerY = rect.Top + ((rect.Bottom - rect.Top) / 2);
+            _ = SetCursorPos(centerX, centerY);
         }
     }
 
@@ -635,6 +650,14 @@ internal static class Program
     private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(IntPtr hWnd, out Rect rect);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetCursorPos(int x, int y);
+
+    [DllImport("user32.dll")]
     private static extern IntPtr GetShellWindow();
 
     [DllImport("user32.dll")]
@@ -676,6 +699,15 @@ internal static class Program
 
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetConsoleWindow();
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
 
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);

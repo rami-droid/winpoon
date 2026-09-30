@@ -39,6 +39,8 @@ The Settings window provides:
 - Add current, remove selected, and clear bookmark controls
 - Live activity log
 
+The **Keybinds** button in the top settings ribbon opens the custom keybind editor. Each action can be assigned a modifier combination and key, duplicate shortcuts are rejected, and **Reset** restores the defaults. Changes apply immediately for the current session and are not persisted yet.
+
 If the Settings window is active, **Add current** uses the last external application window so the WinPoon UI is not pinned accidentally.
 
 ## Installation
