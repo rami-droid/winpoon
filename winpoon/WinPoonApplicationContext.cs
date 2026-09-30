@@ -81,8 +81,27 @@ internal sealed class SettingsForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
-        ClientSize = new Size(410, 735);
+        ClientSize = new Size(410, 779);
         ShowInTaskbar = true;
+
+        var ribbon = new Panel
+        {
+            BackColor = SystemColors.ControlLight,
+            Dock = DockStyle.Top,
+            Height = 44,
+            Padding = new Padding(12, 7, 0, 0)
+        };
+        var keybindsButton = new Button
+        {
+            Size = new Size(105, 30),
+            Text = "Keybinds"
+        };
+        keybindsButton.Click += (_, _) =>
+        {
+            using var editor = new KeybindEditorForm();
+            editor.ShowDialog(this);
+        };
+        ribbon.Controls.Add(keybindsButton);
 
         var title = new Label
         {
@@ -162,6 +181,7 @@ internal sealed class SettingsForm : Form
             AutoSize = true,
             Location = new Point(125, 25),
             Font = new Font(Font, FontStyle.Bold),
+            Tag = KeybindAction.NextWindow,
             Text = "Alt + Tab"
         });
         keybinds.Controls.Add(new Label
@@ -175,6 +195,7 @@ internal sealed class SettingsForm : Form
             AutoSize = true,
             Location = new Point(125, 49),
             Font = new Font(Font, FontStyle.Bold),
+            Tag = KeybindAction.PreviousWindow,
             Text = "Alt + Shift + Tab"
         });
         keybinds.Controls.Add(new Label
@@ -188,6 +209,7 @@ internal sealed class SettingsForm : Form
             AutoSize = true,
             Location = new Point(125, 73),
             Font = new Font(Font, FontStyle.Bold),
+            Tag = KeybindAction.Exit,
             Text = "Ctrl + Alt + Q"
         });
         keybinds.Controls.Add(new Label
@@ -201,6 +223,7 @@ internal sealed class SettingsForm : Form
             AutoSize = true,
             Location = new Point(125, 97),
             Font = new Font(Font, FontStyle.Bold),
+            Tag = KeybindAction.PinWindow,
             Text = "Ctrl + Alt + H"
         });
         keybinds.Controls.Add(new Label
@@ -214,6 +237,7 @@ internal sealed class SettingsForm : Form
             AutoSize = true,
             Location = new Point(125, 121),
             Font = new Font(Font, FontStyle.Bold),
+            Tag = KeybindAction.UnpinWindow,
             Text = "Ctrl + Alt + Backspace"
         });
         keybinds.Controls.Add(new Label
@@ -227,6 +251,7 @@ internal sealed class SettingsForm : Form
             AutoSize = true,
             Location = new Point(125, 145),
             Font = new Font(Font, FontStyle.Bold),
+            Tag = KeybindAction.Slot1,
             Text = "Ctrl + Alt + Numpad 1-9"
         });
 
@@ -319,6 +344,14 @@ internal sealed class SettingsForm : Form
         closeButton.Click += (_, _) => Hide();
 
         Controls.AddRange([title, description, _statusLabel, _interceptAltTab, _startWithWindows, keybinds, bookmarks, logGroup, closeButton]);
+        Controls.Add(ribbon);
+        foreach (Control control in Controls)
+        {
+            if (control != ribbon)
+            {
+                control.Top += ribbon.Height;
+            }
+        }
         AcceptButton = closeButton;
         FormClosing += (_, e) =>
         {
@@ -331,6 +364,8 @@ internal sealed class SettingsForm : Form
 
         Program.LogWritten += AppendLog;
         Program.BookmarksChanged += RefreshHarpoonListFromHook;
+        KeybindManager.BindingsChanged += UpdateKeybindSummary;
+        UpdateKeybindSummary();
         foreach (var message in Program.GetLogHistory())
         {
             AppendLog(message);
@@ -386,12 +421,34 @@ internal sealed class SettingsForm : Form
         _logTextBox.AppendText(message + Environment.NewLine);
     }
 
+    private void UpdateKeybindSummary()
+    {
+        foreach (Control control in Controls)
+        {
+            UpdateKeybindSummary(control);
+        }
+    }
+
+    private static void UpdateKeybindSummary(Control control)
+    {
+        if (control.Tag is KeybindAction action && control is Label label)
+        {
+            label.Text = KeybindManager.Get(action).ToString();
+        }
+
+        foreach (Control child in control.Controls)
+        {
+            UpdateKeybindSummary(child);
+        }
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
             Program.LogWritten -= AppendLog;
             Program.BookmarksChanged -= RefreshHarpoonListFromHook;
+            KeybindManager.BindingsChanged -= UpdateKeybindSummary;
         }
 
         base.Dispose(disposing);
