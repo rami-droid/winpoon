@@ -35,6 +35,7 @@ internal static class Program
     private const long WS_EX_TOOLWINDOW = 0x00000080L;
 
     private const int SW_HIDE = 0;
+    private const int SW_RESTORE = 9;
 
     private const int EXIT_HOTKEY_ID = 1;
 
@@ -87,6 +88,11 @@ internal static class Program
         if (_hookId == IntPtr.Zero)
         {
             Log("Failed to install keyboard hook.");
+            MessageBox.Show(
+                "WinPoon could not install its keyboard hook and will now exit.\n\nSee the activity log for details.",
+                "WinPoon startup failed",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
             return 1;
         }
 
@@ -279,9 +285,9 @@ internal static class Program
 
     private static IntPtr SetHook(LowLevelKeyboardProc proc)
     {
-        using var currentProcess = Process.GetCurrentProcess();
-        using var currentModule = currentProcess.MainModule;
-        var moduleHandle = GetModuleHandle(currentModule?.ModuleName);
+        // Passing null resolves the current executable reliably for framework-dependent
+        // and single-file published builds.
+        var moduleHandle = GetModuleHandle(null);
         return SetWindowsHookEx(WH_KEYBOARD_LL, proc, moduleHandle, 0);
     }
 
@@ -398,9 +404,9 @@ internal static class Program
             }
 
             var target = SwitchableWindows[_currentIndex];
-            SetForegroundWindow(target);
+            var activated = ActivateWindow(target);
             CenterMouseOnWindow(target);
-            Log($"Switched to bookmarked window: {GetWindowTitle(target)}.");
+            Log($"Switched to bookmarked window: {GetWindowTitle(target)} ({(activated ? "activated" : "activation failed")}).");
         }
     }
 
@@ -418,9 +424,41 @@ internal static class Program
             _altSessionActive = false;
             SwitchableWindows.Clear();
             _currentIndex = -1;
-            SetForegroundWindow(HarpoonWindows[index]);
+            var target = HarpoonWindows[index];
+            var activated = ActivateWindow(target);
             CenterMouseOnWindow(HarpoonWindows[index]);
-            Log($"Activated bookmarked slot {index + 1}: {GetWindowTitle(HarpoonWindows[index])}.");
+            Log($"Activated bookmarked slot {index + 1}: {GetWindowTitle(target)} ({(activated ? "activated" : "activation failed")}).");
+        }
+    }
+
+    private static bool ActivateWindow(IntPtr hWnd)
+    {
+        var foregroundWindow = GetForegroundWindow();
+        var foregroundThreadId = foregroundWindow == IntPtr.Zero
+            ? 0u
+            : GetWindowThreadProcessId(foregroundWindow, out _);
+        var currentThreadId = GetCurrentThreadId();
+        var attached = foregroundThreadId != 0 && foregroundThreadId != currentThreadId &&
+            AttachThreadInput(currentThreadId, foregroundThreadId, true);
+
+        try
+        {
+            // Restore only minimized windows. Calling SW_RESTORE on a maximized
+            // window would unexpectedly return it to its normal size.
+            if (IsIconic(hWnd))
+            {
+                ShowWindow(hWnd, SW_RESTORE);
+            }
+
+            BringWindowToTop(hWnd);
+            return SetForegroundWindow(hWnd);
+        }
+        finally
+        {
+            if (attached)
+            {
+                AttachThreadInput(currentThreadId, foregroundThreadId, false);
+            }
         }
     }
 
@@ -574,6 +612,19 @@ internal static class Program
             Console.WriteLine(formattedMessage);
         }
 
+        try
+        {
+            var logDirectory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "WinPoon");
+            Directory.CreateDirectory(logDirectory);
+            File.AppendAllText(Path.Combine(logDirectory, "winpoon.log"), formattedMessage + Environment.NewLine);
+        }
+        catch
+        {
+            // Logging must never prevent the keyboard hook or UI from running.
+        }
+
         LogWritten?.Invoke(formattedMessage);
     }
 
@@ -651,6 +702,22 @@ internal static class Program
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool BringWindowToTop(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRect(IntPtr hWnd, out Rect rect);
 
     [DllImport("user32.dll")]
@@ -700,6 +767,9 @@ internal static class Program
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetConsoleWindow();
 
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
     [StructLayout(LayoutKind.Sequential)]
     private struct Rect
     {
@@ -709,6 +779,4 @@ internal static class Program
         public int Bottom;
     }
 
-    [DllImport("user32.dll")]
-    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
